@@ -1,0 +1,47 @@
+{
+  "name": "dsh-bili-search",
+  "version": "0.3.8",
+  "description": "DeepSeek Harness 插件：按关键词检索 B 站视频（走 wbi 签名 + curl 传输），过硬闸出候选清单，由对话模型看标题剔无关、问清意图后按播放量收口（可标强相关置顶）；deep 模式读详情/字幕/热评并附总结骨架（九节 + 八类主题 profile + 评论区规则），结果落盘 md/csv/json，带图形设置页。",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "bilibili",
+    "bilibili-search",
+    "search",
+    "filter",
+    "summary"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

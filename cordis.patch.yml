@@ -1,0 +1,4 @@
+# Bundle patch for dsh-bili-search: inserts its one plugin row into the composition.
+- insert:
+    - id: bili_filter
+      name: 'dsh-bili-search'
