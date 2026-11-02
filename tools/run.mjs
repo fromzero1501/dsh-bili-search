@@ -12,6 +12,8 @@ const { values, positionals } = parseArgs({
   options: {
     days: { type: 'string', default: '0' },
     duration: { type: 'string', default: 'any' },
+    'duration-min': { type: 'string', default: '' },
+    'duration-max': { type: 'string', default: '' },
     'min-play': { type: 'string', default: '' },
     n: { type: 'string', default: '12' },
     limit: { type: 'string' },
@@ -43,6 +45,8 @@ try {
     keyword,
     days: Number(values.days),
     duration: values.duration,
+    durationMin: values['duration-min'] === '' ? undefined : Number(values['duration-min']),
+    durationMax: values['duration-max'] === '' ? undefined : Number(values['duration-max']),
     // 不传就交给设置页里的默认值（core 里读 settings.minPlay）
     minPlay: values['min-play'] === '' ? undefined : Number(values['min-play']),
     targetN: Number(values.n),
@@ -86,7 +90,13 @@ try {
         '　条件：时间筛选 ' +
         (result.params.days ? '最近 ' + result.params.days + ' 天' : '不限') +
         ' · 时长筛选 ' +
-        (DURATION_BANDS[values.duration] ? DURATION_BANDS[values.duration].label : '不限') +
+        (result.params.durationMin > 0 || result.params.durationMax > 0
+          ? (result.params.durationMin > 0 ? '≥ ' + result.params.durationMin + ' 分' : '') +
+            (result.params.durationMax > 0 ? (result.params.durationMin > 0 ? ' 且 ' : '') + '≤ ' + result.params.durationMax + ' 分' : '') +
+            '（自定义区间）'
+          : DURATION_BANDS[values.duration]
+            ? DURATION_BANDS[values.duration].label
+            : '不限') +
         ' · 播放量筛选 ≥ ' +
         (result.params.minPlay || '不限') +
         ' · 目标 ' +

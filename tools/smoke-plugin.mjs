@@ -187,6 +187,17 @@ else {
     if (gapBad.json.ok !== false) bad('请求间隔 50ms 竟然被接受了')
     else ok('请求间隔 50ms 被拒（下限 200）')
 
+    // 自定义时长区间（2026-11-03 用户定：临时条件，0 = 不限）
+    const dmOk = await call('POST', '/bili-filter-api/settings', { durationMin: 30, durationMax: 0 })
+    if (!dmOk.json.ok || readSettings().durationMin !== 30) bad('时长下限 30 没存上：' + JSON.stringify(dmOk.json.errors))
+    else ok('自定义时长下限可存（30 分钟）')
+    const dmBad = await call('POST', '/bili-filter-api/settings', { durationMin: -5 })
+    if (dmBad.json.ok !== false) bad('时长下限 -5 竟然被接受了')
+    else ok('自定义时长下限负数被拒')
+    const dmOrder = await call('POST', '/bili-filter-api/settings', { durationMin: 60, durationMax: 30 })
+    if (dmOrder.json.ok !== false) bad('下限 60 ≥ 上限 30 竟然被接受了')
+    else ok('自定义时长下限 ≥ 上限被拒')
+
     const merged = effectiveParams({ days: 3 }, readSettings())
     const fallback = effectiveParams({}, readSettings())
     if (merged.days !== 3) bad('调用参数没盖过设置默认：' + merged.days)
@@ -201,6 +212,8 @@ for (const [label, args, expect] of [
   ['空关键词', { keyword: '  ' }, '要搜什么'],
   ['非法时长档', { keyword: 'x', duration: '9' }, '时长档'],
   ['非法模式', { keyword: 'x', mode: 'summary' }, 'overview'],
+  ['时长区间下限≥上限', { keyword: 'x', durationMin: 60, durationMax: 30 }, '下限 < 上限'],
+  ['时长区间超范围', { keyword: 'x', durationMin: 700 }, '0–600'],
 ]) {
   const result = await tool.execute(args)
   if (result.ok !== false || !String(result.message).includes(expect)) bad(label + ' 分支不对：' + JSON.stringify(result))
@@ -209,7 +222,7 @@ for (const [label, args, expect] of [
 
 // 硬闸 G7（播放量下限）：不联网，直接喂假条目
 {
-  const { gates, checkVariants, queryVariants, pickRows } = await import('../lib/core.js')
+  const { gates, checkVariants, queryVariants, pickRows, poolKeyOf, renderRows } = await import('../lib/core.js')
   const now = Math.floor(Date.now() / 1000)
   const mk = (bvid, title, play) => ({
     bvid,
@@ -260,6 +273,36 @@ for (const [label, args, expect] of [
   const picked3 = pickRows(rows4, { targetN: 2, upCap: 3, sort: 'play', keep: 'BVa,BVb', strong: 'BVzz' })
   if (picked3.strongMissing.length !== 1 || picked3.strongMissing[0] !== 'BVzz') bad('强相关里池子没有的 bvid 没单独回报')
   else ok('强相关里对不上的 bvid 单独回报')
+
+  // 2026-11-03 用户定：临时条件 —— 自定义时长区间（分钟）在本地过闸
+  const longRow = { ...mk('BVlong', '四十分钟的长片', 5000), durationSec: 2400 }
+  const shortRow = { ...mk('BVshort', '两分钟的短片', 5000), durationSec: 120 }
+  const gr = gates([longRow, shortRow], { minPlay: 0, durationMin: 30 })
+  if (gr.kept.length !== 1 || gr.kept[0].bvid !== 'BVlong' || gr.kills.G3.length !== 1) {
+    bad('自定义时长下限没生效：kept=' + gr.kept.length + ' G3=' + gr.kills.G3.length)
+  } else ok('自定义时长区间过闸（≥30 分钟留 1 条、淘汰 1 条）')
+  const gr2 = gates([longRow, shortRow], { minPlay: 0, duration: '1', durationMin: 30 })
+  if (gr2.kept.length !== 1 || gr2.kept[0].bvid !== 'BVlong' || gr2.kills.G3.length !== 1) {
+    bad('给了区间时档位没被忽略：kept=' + gr2.kept.length + ' G3=' + gr2.kills.G3.length)
+  } else ok('给了自定义区间后档位被忽略（不同时按 ≤10 分钟淘汰）')
+  const gMax = gates([longRow, shortRow], { minPlay: 0, durationMax: 10 })
+  if (gMax.kept.length !== 1 || gMax.kept[0].bvid !== 'BVshort') bad('自定义时长上限没生效')
+  else ok('自定义时长上限生效（≤10 分钟只留短片）')
+  const kBase = { keyword: 'x', days: 30, duration: 'any', typename: '', pagesPerOrder: 2, orders: ['totalrank'] }
+  const kNo = poolKeyOf({ ...kBase, durationMin: 0, durationMax: 0 })
+  const kYes = poolKeyOf({ ...kBase, durationMin: 30, durationMax: 0 })
+  if (kNo === kYes) bad('候选池缓存 key 没区分自定义时长区间')
+  else ok('候选池缓存 key 含自定义时长区间')
+
+  // 2026-11-03 用户定：发布时间不许被裁掉 —— 一行式摘要每行都要带发布日期
+  const line = renderRows([{ ...longRow, url: 'https://www.bilibili.com/video/BVlong' }])
+  if (!line.includes('发布') || !/\d{4}-\d{2}-\d{2}/.test(line)) {
+    bad('一行式摘要没带发布日期：' + line)
+  } else if (!line.includes('BVlong') || !line.includes('时长')) bad('一行式摘要缺链接或时长：' + line)
+  else ok('一行式摘要带链接/UP/发布/时长/播放：' + line.slice(0, 46) + '…')
+  const noPub = renderRows([{ ...longRow, pubdate: null, url: 'https://www.bilibili.com/video/BVlong' }])
+  if (!noPub.includes('发布时间未知')) bad('缺 pubdate 时没写「发布时间未知」：' + noPub)
+  else ok('缺 pubdate 写成「发布时间未知」')
 }
 
 // 总结骨架（2026-11-02 用户定：九节 + L0 硬规则 + 评论规则 + 主题 profile）
@@ -361,7 +404,7 @@ try {
     ['window.__ModuleLoader__.load', client.includes('window.__ModuleLoader__.load(')],
     ["id: 'dsh-bili-search'", client.includes("id: 'dsh-bili-search'")],
     ['settings.section 槽位', client.includes("'settings.section'")],
-    ['label B站筛选', client.includes("label: 'B站筛选'")],
+    ['label B站搜索', client.includes("label: 'B站搜索'")],
     ['打自己的接口', client.includes("'/bili-filter-api'")],
   // 2026-11-02 用户定：设置页改成自动保存（改动即落盘），保存按钮应当已经删掉
   ['自动保存文案', client.includes('已自动保存')],
@@ -369,7 +412,7 @@ try {
   ]
   const fails = checks.filter(([, hit]) => !hit).map(([what]) => what)
   if (fails.length) bad('client.js 缺：' + fails.join('、'))
-  else ok('client.js 是自注册脚本，注册到 settings.section（label「B站筛选」）')
+  else ok('client.js 是自注册脚本，注册到 settings.section（label「B站搜索」）')
 
   // 不装 React 也能验「注册路径通不通」：给一个最小的 createElement / hooks 替身，
   // 把 factory 跑起来，看它有没有往 settings.section 注册一节、以及 Panel 首次渲染会不会抛。
@@ -398,7 +441,7 @@ try {
   else {
     const slots = { inject: (_slot, fn) => fn(), register: (spec, comp) => (registered = { spec, comp }) }
     mod.api.apply({ get: () => slots, effect: (fn) => fn() })
-    if (!registered || registered.spec.name !== 'settings.section' || registered.spec.label !== 'B站筛选') {
+    if (!registered || registered.spec.name !== 'settings.section' || registered.spec.label !== 'B站搜索') {
       bad('没往 settings.section 注册：' + JSON.stringify(registered && registered.spec))
     } else {
       // 槽位里存的是一个组件（() => h(Panel)）。拿它的类型跑一遍首渲染：

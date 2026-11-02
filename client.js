@@ -48,6 +48,9 @@ window.__ModuleLoader__.load({
   background:var(--dsw-alias-bg-layer-4,rgba(128,128,128,.12));color:inherit;}
 [data-bf-input]:focus{outline:none;border-color:#3b82f6;}
 [data-bf-num]{width:96px;text-align:center;}
+[data-bf-range]{display:flex;align-items:center;gap:8px;}
+[data-bf-range] [data-bf-num]{width:78px;}
+[data-bf-dash]{opacity:.45;font-size:12px;}
 [data-bf-wide]{flex:1;min-width:180px;}
 [data-bf-btn]{padding:7px 12px;border-radius:8px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap;
   border:1px solid var(--dsw-alias-bg-layer-3,rgba(255,255,255,.16));
@@ -229,7 +232,7 @@ window.__ModuleLoader__.load({
 
       if (!draft) {
         return h('div', { 'data-bf-page': '' },
-          h('div', { 'data-bf-h': '' }, 'B站筛选'),
+          h('div', { 'data-bf-h': '' }, 'B站搜索'),
           msg ? h('div', { 'data-bf-msg': '', 'data-bf-bad': msg.bad ? '' : undefined }, msg.text) : h('div', { 'data-bf-note': '' }, '读取中…'))
       }
 
@@ -248,6 +251,12 @@ window.__ModuleLoader__.load({
           h(Row, null,
             h('div', { 'data-bf-label': '' }, '时长筛选'),
             h(Select, { value: draft.duration, options: DURATIONS, onChange: (v) => set('duration', v) })),
+          h(Row, null,
+            h('div', { 'data-bf-label': '' }, '自定义时长区间（分钟，0=不限；填了就忽略上面的档位）'),
+            h('div', { 'data-bf-range': '' },
+              h(Num, { value: draft.durationMin === undefined ? 0 : draft.durationMin, min: lim('durationMin').min, max: lim('durationMin').max, onChange: (v) => set('durationMin', v) }),
+              h('span', { 'data-bf-dash': '' }, '–'),
+              h(Num, { value: draft.durationMax === undefined ? 0 : draft.durationMax, min: lim('durationMax').min, max: lim('durationMax').max, onChange: (v) => set('durationMax', v) }))),
           h(Row, null,
             h('div', { 'data-bf-label': '' }, '播放量筛选（硬闸 G7，0=不限）'),
             h(Num, { value: draft.minPlay, min: lim('minPlay').min, max: lim('minPlay').max, onChange: (v) => set('minPlay', v) })),
@@ -422,7 +431,7 @@ window.__ModuleLoader__.load({
         return
       }
       slots.inject('settings.section', () => slots.register(
-        { name: 'settings.section', id: 'bili-search', order: 34, label: 'B站筛选' },
+        { name: 'settings.section', id: 'bili-search', order: 34, label: 'B站搜索' },
         () => h(Panel),
       ))
     }
