@@ -20,7 +20,25 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # 这个包零运行时依赖（只有 peerDependency），不需要 npm ci
+      # 这个包零运行时依赖（只有 peerDependency @deepseek-ai/dsh-tools），不需要 npm ci。
+      # 但 peer 依赖在公共 registry 上没有，冒烟要 import lib/index.js，所以这里放一个最小桩：
+      # defineTool 只需把作者写的「参数表」包成 JSON Schema（宿主真实现也是这么做的）。
+      - name: 宿主 peer 依赖打桩
+        run: |
+          mkdir -p node_modules/@deepseek-ai/dsh-tools
+          printf '%s\n' '{"name":"@deepseek-ai/dsh-tools","version":"0.0.0-ci-stub","type":"module","exports":"./index.js"}' > node_modules/@deepseek-ai/dsh-tools/package.json
+          cat > node_modules/@deepseek-ai/dsh-tools/index.js <<'EOF'
+          // CI 专用桩：只保留冒烟用到的那部分契约（defineTool 把参数表编译成 JSON Schema）。
+          export function defineTool(options) {
+            return {
+              name: options.name,
+              description: options.description,
+              parameters: { type: 'object', properties: options.parameters },
+              execute: options.execute,
+            }
+          }
+          EOF
+
       - name: 语法检查
         run: npm run check
 

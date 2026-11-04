@@ -21,6 +21,23 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # peer 依赖 @deepseek-ai/dsh-tools 不在公共 registry 上，冒烟要 import lib/index.js，先打桩
+      - name: 宿主 peer 依赖打桩
+        run: |
+          mkdir -p node_modules/@deepseek-ai/dsh-tools
+          printf '%s\n' '{"name":"@deepseek-ai/dsh-tools","version":"0.0.0-ci-stub","type":"module","exports":"./index.js"}' > node_modules/@deepseek-ai/dsh-tools/package.json
+          cat > node_modules/@deepseek-ai/dsh-tools/index.js <<'EOF'
+          // CI 专用桩：只保留冒烟用到的那部分契约（defineTool 把参数表编译成 JSON Schema）。
+          export function defineTool(options) {
+            return {
+              name: options.name,
+              description: options.description,
+              parameters: { type: 'object', properties: options.parameters },
+              execute: options.execute,
+            }
+          }
+          EOF
+
       - name: 发版前先跑一遍验收
         run: npm run check && npm run smoke && npm run test:requests
 
