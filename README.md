@@ -8,9 +8,11 @@
 
 B 站搜索接口直接调用有三个坑，这个插件把三个都踩过了：
 
-1. **search 端点要 wbi 签名**（`wts` + `w_rid`，密钥取 `nav` 的 `wbi_img`，缓存 1 小时），不签名一律被拒。
+1. **search 端点的签名要求会变**：`wbi` 签名（`wts` + `w_rid`，密钥取 `nav` 的 `wbi_img`，缓存 1 小时）是首选通道，但 2026-11-04 实测发现 **无 cookie、无签名同样能拿到 `code=0`、`page_size=50` 也生效**。所以现在的策略是「签名优先、失败自动降级免签名」，并把结果状态暴露在 `/state` 的 `searchChannel` 里——早期把它当成硬依赖，遇到风控时误判成「签名坏了」。
 2. **node 的 fetch / http2 会被 TLS 指纹拦**（412 拦截页），实际传输走 `curl` 子进程（cookie 写进 `--config` 临时文件，不进 argv）。
 3. **字幕接口有两类偶发故障**：字幕条目在但 `subtitle_url` 为空；同一 bvid 每次给的字幕文件可能不是同一条（串台）。所以字幕要重试 + 质量闸，且**覆盖率达标也挡不住语义串台**（实测遇到过 100% 覆盖但内容是另一条视频的）。
+
+登录凭证只是加分项：**没有 cookie 也能跑 overview**（搜索端点免登录），差别在 `deep` 的评论与字幕，以及匿名/登录两种身份下排序会略有不同。
 
 ## 能力
 
@@ -21,11 +23,35 @@ B 站搜索接口直接调用有三个坑，这个插件把三个都踩过了：
 - **deep 取证**：只对收口后的前 `deepTop` 条取 `view` 详情 + AI 字幕（最多试 3 次）+ 热评（20/50/100 条，内部翻页凑数）。
 - **总结骨架**：deep 收口后自动附一份可照着写的结构——L0 九条硬约束（证据成色先交代 / 正文与评论来源隔离 / 必须落名 / 数字带单位与成立条件 / 标准化换算 / 标证据强度 / 去重 / 术语归一 / 缺口必须声明）+ L1 固定九节 + L2 八类主题模板（price / howto / review / event / idea / product / ranking / generic，按关键词与标题自动判定）+ 评论区规则 + 自动填好的证据成色表。
 - **落盘**：md / csv / json 三份（可分别关掉）。
-- **图形设置页**：DSH「设置」→「B站筛选」，改哪一项就自动保存，下一次检索即生效。
+- **找 UP 主 / 找番剧**：`scope=user`、`scope=bangumi` 走聚合搜索（`search/all/v2`，免签名）的分组结果，只列清单（每页固定 20 条），不走硬闸、不排序、不收口。
+- **稳定输出契约**：json 顶层另有 `items`，固定 10 个下划线字段（`title` / `author` / `play_count` / `duration` / `publish_date` / `url` / `bvid` / `tag` / `description` / `typename`），给下游脚本用，B 站改字段时这一层不跟着变。
+- **平台命中字段**：搜索接口自己会带 `hit_columns`（命中在 title / tag / description），命中率优先用它，比本地切片更准。
+- **图形设置页**：DSH「设置」→「B站搜索」，改哪一项就自动保存，下一次检索即生效。
 
 ## 安装
 
-插件是本地 `link:` 型，装在 DSH desktop profile 里。
+两种方式：**npm 装**（推荐，跟宿主一起升级）或 **本地 link**（改代码即生效）。
+
+### 方式 A：npm
+
+```bash
+npm i dsh-bili-search
+```
+
+然后在 `profiles/desktop/package.json` 里把包名列进 bundles（依赖可以交给包管理器写，bundle 必须有）：
+
+```json
+{
+  "dependencies": { "dsh-bili-search": "^0.5.0" },
+  "dsh": { "profile": { "bundles": ["...", "dsh-bili-search"] } }
+}
+```
+
+本机的 `dsh-bili-scroll 2.3.0` 就是 npm 装进 profile 的，宿主按「包名 + 版本」加载插件这条路是通的。
+
+### 方式 B：本地 link
+
+插件目录放任意位置，在 DSH desktop profile 里登记成 `link:` 型。
 
 ```bash
 # 1) 把仓库放到任意目录，例如 D:/plugins/dsh-bili-search
@@ -68,6 +94,7 @@ New-Item -ItemType Junction `
 | --- | --- |
 | `keyword` | 检索词，按意图改写成同义整句，可多条（≤4） |
 | `stage` | `list`（默认，出候选）/ `final`（收口落盘） |
+| `scope` | `video`（默认，两段式）/ `user`（找 UP 主）/ `bangumi`（找番剧、影视；只列清单，不支持 final） |
 | `keep` | final 用：候选里留下的 bvid，空格或逗号分隔 |
 | `strong` | final 用：几乎与意图一致的 bvid，排最前且无视播放量（须同时在 keep 里） |
 | `sort` | `totalrank`（B 站综合排序位次）/ `play`（播放量降序）；list 默认前者、final 默认后者 |
@@ -127,12 +154,16 @@ POST /bili-filter-api/probe-login      检测登录态
 ## 开发与验证
 
 ```bash
-node tools/smoke-plugin.mjs      # 插件层冒烟（39 项，不联网，会临时改设置并自动还原）
+npm run check                    # node --check 全部源文件 + package.json 能 JSON.parse
+npm run smoke                    # 插件层冒烟（56 项，不联网，会临时改设置并自动还原）
+npm run test:requests            # 请求次数离线断言（打桩 fetch：1 排序 1 页 = 1 次；final 复用 = 0 次）
 node tools/test-risk.mjs         # 风控退避与冷却（假 fetch，不联网）
 node tools/test-variants.mjs     # 多检索词变体与拆词拦截（不联网）
 node tools/test-cache.mjs        # 候选池复用（假 fetch，不联网）
 node tools/run.mjs "关键词" --days 30 --stage list --limit 20   # 真跑原型 CLI
 ```
+
+CI 在 push / PR 上跑这三条（Node 20 / 22 / 24 三档）；打 `v*` tag 会触发 `publish.yml`：先跑同一套验收，校验 tag 与 `package.json` 版本一致，再 `npm publish --provenance`。发版前本机要 `npm login`，仓库 Secrets 里要有 `NPM_TOKEN`。
 
 `tools/` 下另有一次性探针（`probe-once` / `probe-endpoints` / `probe-wbi` / `probe-deep` / `dump-transcript*`），用于排查接口与字幕问题。
 

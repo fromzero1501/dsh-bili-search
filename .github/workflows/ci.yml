@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # 这个包零运行时依赖（只有 peerDependency），不需要 npm ci
+      - name: 语法检查
+        run: npm run check
+
+      - name: 插件层冒烟（假 ctx，不联网）
+        run: npm run smoke
+
+      - name: 请求次数离线断言（打桩 fetch，不联网）
+        run: npm run test:requests

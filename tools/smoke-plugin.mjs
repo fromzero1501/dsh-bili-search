@@ -70,6 +70,7 @@ else {
   const missing = [
     'keyword',
     'stage',
+    'scope',
     'keep',
     'sort',
     'days',
@@ -214,6 +215,7 @@ for (const [label, args, expect] of [
   ['非法模式', { keyword: 'x', mode: 'summary' }, 'overview'],
   ['时长区间下限≥上限', { keyword: 'x', durationMin: 60, durationMax: 30 }, '下限 < 上限'],
   ['时长区间超范围', { keyword: 'x', durationMin: 700 }, '0–600'],
+  ['非法 scope', { keyword: 'x', scope: 'fanju' }, 'scope 只有'],  ['scope=user 不支持 final', { keyword: 'x', scope: 'user', stage: 'final' }, '没有两段式'],
 ]) {
   const result = await tool.execute(args)
   if (result.ok !== false || !String(result.message).includes(expect)) bad(label + ' 分支不对：' + JSON.stringify(result))
@@ -458,6 +460,79 @@ try {
   }
 } catch (error) {
   bad('client.js 装载失败：' + String(error.message || error))
+}
+
+// 2026-11-04 新增能力：免签名降级 / 平台命中字段 / 聚合搜索清单 / 稳定输出契约
+{
+  const { keywordCoverage, renderScope, wbiState, credentialState, serialize } = await import('../lib/core.js')
+
+  const st = wbiState()
+  if (!['unknown', 'wbi', 'plain'].includes(st)) bad('wbiState 返回了意外值：' + st)
+  else ok('搜索通道状态可读（wbiState=' + st + '，可为 plain 表示已降级免签名）')
+
+  const cred = credentialState()
+  if (!cred || typeof cred.ok !== 'boolean' || !('reason' in cred)) bad('credentialState 形状不对：' + JSON.stringify(cred))
+  else ok('凭证状态可读（' + (cred.ok ? '已登录' : '无凭证：' + cred.reason) + '；无凭证也能跑 overview）')
+
+  // 平台自己标的命中字段（hit_columns）：标题命中记满分，只在标签命中记 0.8
+  const covTitle = keywordCoverage({ title: 'AI视频 价格', tag: '无关', description: '无', hitColumns: ['title'] }, ['AI视频'])
+  const covTag = keywordCoverage({ title: 'AI视频 价格', tag: '无关', description: '无', hitColumns: ['tag'] }, ['AI视频'])
+  if (!(covTitle > covTag)) bad('hitColumns 没进命中率：title=' + covTitle + ' tag=' + covTag)
+  else ok('平台命中字段生效（标题命中 ' + covTitle + ' > 仅标签命中 ' + covTag + '）')
+
+  // 聚合搜索清单：UP 主 / 番剧各一张表
+  const upTable = renderScope({
+    scope: 'user',
+    keyword: '影视飓风',
+    rows: [{ rank: 1, mid: 946974, title: '影视飓风', fans: 1000, videos: 900, level: 6, sign: '签名', url: 'https://space.bilibili.com/946974' }],
+    stats: { groups: ['bili_user'] },
+  })
+  const bgmTable = renderScope({
+    scope: 'bangumi',
+    keyword: '三体',
+    rows: [{ rank: 1, seasonId: 1, title: '三体', typename: '国创', sign: '全15话', badge: '会员', videos: 15, url: 'https://www.bilibili.com/bangumi/play/ss1' }],
+    stats: { groups: ['media_bangumi'] },
+  })
+  if (!upTable.includes('空间') || !bgmTable.includes('集数')) bad('聚合搜索清单表头不对')
+  else ok('聚合搜索清单可渲染（UP 主表带「空间」、番剧表带「集数」）')
+
+  // 稳定输出契约：items 固定 10 字段（下游脚本只认这一层）
+  const fake = serialize({
+    keyword: 'x',
+    params: { keyword: 'x' },
+    stage: 'list',
+    stats: {},
+    funnel: {},
+    probe: null,
+    deep: null,
+    rows: [
+      {
+        rank: 1,
+        bvid: 'BV1x',
+        title: 't',
+        author: 'a',
+        mid: 1,
+        play: 1,
+        like: 1,
+        favorites: 1,
+        review: 1,
+        durationSec: 60,
+        durationText: '1:00',
+        pubdate: 1,
+        tag: 'a,b',
+        description: 'd',
+        typename: '科技',
+        url: 'https://b23.tv/BV1x',
+        hitColumns: ['title'],
+        orders: new Set(['totalrank']),
+      },
+    ],
+  })
+  const oneKeys = Object.keys((fake.items && fake.items[0]) || {})
+  const want = ['title', 'author', 'play_count', 'duration', 'publish_date', 'url', 'bvid', 'tag', 'description', 'typename']
+  const miss = want.filter((k) => !oneKeys.includes(k))
+  if (miss.length) bad('输出契约缺字段：' + miss.join(',') + '（实际 ' + oneKeys.join(',') + '）')
+  else ok('稳定输出契约齐全（items 10 字段，另带 hitColumns）')
 }
 
 restore()

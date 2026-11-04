@@ -1,0 +1,39 @@
+name: publish
+
+# 打 tag 就发版：git tag v0.5.0 && git push origin v0.5.0
+# 需要仓库 Secrets 里有 NPM_TOKEN（npm 的 Automation token）。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # provenance 需要
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: 发版前先跑一遍验收
+        run: npm run check && npm run smoke && npm run test:requests
+
+      - name: 校验 tag 与 package.json 版本一致
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$ver" ]; then
+            echo "tag $tag 与 package.json 的 $ver 不一致，停下"
+            exit 1
+          fi
+
+      - name: npm publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

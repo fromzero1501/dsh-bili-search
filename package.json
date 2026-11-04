@@ -1,12 +1,14 @@
 {
   "name": "dsh-bili-search",
-  "version": "0.4.0",
-  "description": "DeepSeek Harness 插件：按关键词检索 B 站视频（走 wbi 签名 + curl 传输），过硬闸出候选清单，由对话模型看标题剔无关、问清意图后按播放量收口（可标强相关置顶）；deep 模式读详情/字幕/热评并附总结骨架（九节 + 八类主题 profile + 评论区规则），结果落盘 md/csv/json，带图形设置页。",
+  "version": "0.5.0",
+  "description": "DeepSeek Harness 插件：按关键词检索 B 站视频（wbi 签名优先、拿不到自动降级免签名，无登录凭证也能跑），过硬闸出候选清单，由对话模型看标题剔无关、问清意图后按播放量收口（可标强相关置顶）；支持找 UP 主 / 找番剧；deep 模式读详情/字幕/热评并附总结骨架（九节 + 八类主题 profile + 评论区规则），结果落盘 md/csv/json，带图形设置页。",
   "keywords": [
     "deepseek-harness",
     "dsh-plugin",
     "bilibili",
     "bilibili-search",
+    "bilibili-user",
+    "bangumi",
     "search",
     "filter",
     "summary"
@@ -22,7 +24,8 @@
     "lib",
     "client.js",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -42,6 +45,23 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fromzero1501/dsh-bili-search.git"
+  },
+  "homepage": "https://github.com/fromzero1501/dsh-bili-search#readme",
+  "bugs": {
+    "url": "https://github.com/fromzero1501/dsh-bili-search/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "check": "node --check lib/core.js && node --check lib/index.js && node --check lib/settings.js && node --check lib/summary.js && node --check client.js",
+    "smoke": "node tools/smoke-plugin.mjs",
+    "test:requests": "node tools/test-requests.mjs",
+    "test": "npm run check && npm run smoke && npm run test:requests"
   },
   "license": "MIT"
 }
