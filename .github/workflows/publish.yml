@@ -35,6 +35,12 @@ jobs:
           npm config get registry
           echo "authToken 残留行数：$(cat "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}" 2>/dev/null | grep -c _authToken || true)"
 
+      # 可信发布（OIDC）要 npm CLI ≥ 11.5.1，Node 22 自带的是 10.x，会直接 ENEEDAUTH
+      - name: 升级 npm CLI（OIDC 支持）
+        run: |
+          npm install -g npm@latest
+          npm --version
+
       # peer 依赖 @deepseek-ai/dsh-tools 不在公共 registry 上，冒烟要 import lib/index.js，先打桩
       - name: 宿主 peer 依赖打桩
         run: |
