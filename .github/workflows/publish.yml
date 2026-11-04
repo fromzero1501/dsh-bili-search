@@ -1,7 +1,10 @@
 name: publish
 
 # 打 tag 就发版：git tag v0.5.0 && git push origin v0.5.0
-# 需要仓库 Secrets 里有 NPM_TOKEN（npm 的 Automation token）。
+# 认证走 OIDC 可信发布（Trusted Publishing），不需要任何 token：
+#   npm 网页 → Settings → Trusted Publishing → GitHub Actions
+#   package: dsh-bili-search / repository: fromzero1501/dsh-bili-search / workflow: publish.yml / 允许 publish
+# 有了这条关系之后，本 job 靠 id-token 换一次性凭证，npm 侧不再需要 NPM_TOKEN。
 on:
   push:
     tags: ['v*']
@@ -50,7 +53,5 @@ jobs:
             exit 1
           fi
 
-      - name: npm publish
+      - name: npm publish（OIDC 可信发布，无 token）
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
