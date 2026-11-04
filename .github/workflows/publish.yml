@@ -19,10 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 不能给 registry-url：它会在 .npmrc 里写 `_authToken=${NODE_AUTH_TOKEN}` 占位，
+      # npm 于是走 token 认证、不再换 OIDC，结果就是 PUT 404（0.5.1 实测踩过）。
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
+
+      # 清干净任何 token 配置，确保 npm 只能走 OIDC 可信发布
+      - name: 确保无 token、直连官方 registry
+        run: |
+          for f in "$HOME/.npmrc" "${NPM_CONFIG_USERCONFIG:-}"; do
+            [ -n "$f" ] && [ -f "$f" ] && sed -i '/_authToken/d' "$f" || true
+          done
+          npm config set registry https://registry.npmjs.org/ --location=user
+          npm config get registry
+          echo "authToken 残留行数：$(cat "${NPM_CONFIG_USERCONFIG:-$HOME/.npmrc}" 2>/dev/null | grep -c _authToken || true)"
 
       # peer 依赖 @deepseek-ai/dsh-tools 不在公共 registry 上，冒烟要 import lib/index.js，先打桩
       - name: 宿主 peer 依赖打桩
