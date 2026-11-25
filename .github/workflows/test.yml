@@ -1,0 +1,42 @@
+name: test
+
+# push / PR 都跑同一套离线验收，三档 Node 并行。
+# 不联网、不打 B 站接口：全部用打桩 fetch 跑（见 tools/test-*.mjs 头部注释）。
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # peer 依赖 @deepseek-ai/dsh-tools 不在公共 registry 上，冒烟要 import lib/index.js，先打桩
+      - name: 宿主 peer 依赖打桩
+        run: |
+          mkdir -p node_modules/@deepseek-ai/dsh-tools
+          printf '%s\n' '{"name":"@deepseek-ai/dsh-tools","version":"0.0.0-ci-stub","type":"module","exports":"./index.js"}' > node_modules/@deepseek-ai/dsh-tools/package.json
+          cat > node_modules/@deepseek-ai/dsh-tools/index.js <<'EOF'
+          // CI 专用桩：只保留冒烟用到的那部分契约（defineTool 把参数表编译成 JSON Schema）。
+          export function defineTool(options) {
+            return {
+              name: options.name,
+              description: options.description,
+              parameters: { type: 'object', properties: options.parameters },
+              execute: options.execute,
+            }
+          }
+          EOF
+
+      - name: 验收（check + smoke + 请求计数 + 风控 / 变体 / 韧性）
+        run: npm test

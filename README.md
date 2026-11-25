@@ -121,6 +121,8 @@ bili_filter(keyword="<同一条串>", stage="final", keep="BV1xxx,BV1yyy", stron
 | --- | --- |
 | `~/.bili-filter/settings.json` | 设置页存的值 |
 | `~/.bili-filter/state.json` | 风控冷却截止时间 |
+| `~/.bili-filter/silent.json` | 静默期（其它工具刚打过 B 站时，告诉搜索「先等等」） |
+| `~/.bili-filter/adaptive.json` | 自适应请求间隔（AIMD：撞一次翻倍、连续成功回落） |
 | `~/.bili-filter/wbi.json` | wbi 签名密钥缓存（1 小时） |
 | `~/.bili-filter/last-run.json` | 最近一次运行摘要 |
 | `~/Documents/bili-filter/` | 落盘结果（md / csv / json） |
@@ -129,18 +131,25 @@ bili_filter(keyword="<同一条串>", stage="final", keep="BV1xxx,BV1yyy", stron
 自检路由（宿主 Web 端口上）：
 
 ```
-GET  /bili-filter-api/state            版本 / 传输方式 / 本轮调用数 / 冷却剩余 / 设置摘要
+GET  /bili-filter-api/state            版本 / 传输方式 / 本轮调用数 / 冷却剩余（分+秒）/ 静默期剩余 / 自适应间隔 / 设置摘要
 GET  /bili-filter-api/settings         设置 + 默认值 + 上下限
 POST /bili-filter-api/settings         改设置（逐项校验，越界 400）
 POST /bili-filter-api/clear-cooldown   立即清除风控冷却
+POST /bili-filter-api/clear-silence    立即清除静默期
+POST /bili-filter-api/reset-adaptive   重置自适应学习到的间隔（回到设置值）
 POST /bili-filter-api/refresh-wbi      刷新 wbi 签名
 POST /bili-filter-api/probe-login      检测登录态
 ```
 
 ## 风控与节奏
 
-- 请求间隔**默认 340ms（下限 200ms）**，单轮调用上限硬顶 70。
-- 命中风控（`-412` / 拦截页）→ 退避重试 6s、18s → 仍失败则落冷却 10 分钟，冷却期内直接拒绝并告知剩余时间。
+- 请求间隔**默认 340ms（下限 200ms，上限 3000ms）**，单轮调用上限硬顶 70。
+- **自适应间隔（0.5.4）**：实际间隔取「设置值」与「自适应学习值」里更慢的那个。撞一次风控 → 学习值翻倍（600ms 起，封顶 3000ms）并落盘 `adaptive.json`；连续成功 3 次 → 每次 ×0.8 − 20ms 慢慢放快。换网络 / 换代理 / 共享出口 IP 之后不用手动调，它会自己找到不撞墙的节奏。
+- 命中风控（`-412` / 拦截页）→ 先在本页退避重试 6s、18s → 仍失败则落冷却（默认 10 分钟，可设 5–60），冷却期内直接拒绝并告知剩余时间。
+- **部分失败保留（0.5.4）**：手上已经取到候选时，中途某一页被拦不再整轮作废，而是带 `stats.partial = true` 收工，并顺手写 90 秒静默期——为一页 412 丢掉整轮候选比慢一点更亏。一条都没取到时照旧抛错，绝不拿空池子冒充「没结果」。
+- **静默期协议（0.5.4）**：探针类工具（`bili_sources`、登录检测、批量详情）打完 B 站应该调 `markSilence(ms, reason)` 写一段静默期，搜索端点在静默期内会先等再打。两个工具各管各的预算、却共用一个出口 IP，是「一上来就被判拦截页」最常见的原因。
+- **多检索词不再摊薄成 1 页（0.5.4）**：给 2 条以上变体时每个变体保底 2 页（原来 4 个词会被摊成各 1 页，召回比单词 3 页还差）；单变体仍然严格尊重 `pagesPerOrder`。
+- **设置页「风控与探测」可直接看和操作**（0.5.4）：当前生效间隔（设置值 / 自适应学习值）、静默期剩余秒数、冷却剩余、本次已用调用数，旁边配「重置学习值」「清除静默期」「清除冷却」三个按钮——不用再靠猜或翻日志判断现在是不是被限速。
 - 只读：不点赞、不评论、不投币、不改任何账号状态。
 - 账号只走本机 cookie，插件不保存 cookie 内容，只保存路径。
 
@@ -158,12 +167,13 @@ npm run check                    # node --check 全部源文件 + package.json �
 npm run smoke                    # 插件层冒烟（56 项，不联网，会临时改设置并自动还原）
 npm run test:requests            # 请求次数离线断言（打桩 fetch：1 排序 1 页 = 1 次；final 复用 = 0 次）
 node tools/test-risk.mjs         # 风控退避与冷却（假 fetch，不联网）
+node tools/test-adaptive.mjs     # 静默期 / 自适应间隔 / 变体页数 / 部分失败保留（不联网）
 node tools/test-variants.mjs     # 多检索词变体与拆词拦截（不联网）
 node tools/test-cache.mjs        # 候选池复用（假 fetch，不联网）
 node tools/run.mjs "关键词" --days 30 --stage list --limit 20   # 真跑原型 CLI
 ```
 
-CI 在 push / PR 上跑这三条（Node 20 / 22 / 24 三档）；打 `v*` tag 会触发 `publish.yml`：先跑同一套验收，校验 tag 与 `package.json` 版本一致，再 `npm publish --provenance`。发版前本机要 `npm login`，仓库 Secrets 里要有 `NPM_TOKEN`。
+CI 在 push / PR 上跑同一套离线验收（Node 20 / 22 / 24 三档）；打 `v*` tag 会触发 `publish.yml`：先跑 `npm test`（check + smoke + 请求计数 + 风控 / 变体 / 韧性三套回归），校验 tag 与 `package.json` 版本一致，再 `npm publish --provenance`。发布走 OIDC 可信发布（npm 网页里配好 Trusted Publishing 即可），不需要 `NPM_TOKEN`。
 
 `tools/` 下另有一次性探针（`probe-once` / `probe-endpoints` / `probe-wbi` / `probe-deep` / `dump-transcript*`），用于排查接口与字幕问题。
 

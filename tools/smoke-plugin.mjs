@@ -132,7 +132,27 @@ else {
       ok('/state：version=' + state.json.version + ' transport=' + state.json.transport + ' cooldown=' + state.json.cooldownMinutes + ' 分钟')
       if (!state.json.settingsFile) bad('/state 没带 settingsFile')
       else ok('/state 带设置文件路径')
+      if (typeof state.json.silenceSeconds !== 'number') bad('/state 没带 silenceSeconds')
+      else ok('/state：静默期 ' + state.json.silenceSeconds + ' 秒')
+      if (!state.json.adaptive || typeof state.json.adaptive.effectiveGapMs !== 'number')
+        bad('/state 没带 adaptive.effectiveGapMs')
+      else
+        ok('/state：自适应字段齐（生效 ' + state.json.adaptive.effectiveGapMs + 'ms / 学习 ' + (state.json.adaptive.gapMs || 0) + 'ms）')
+      if (typeof state.json.cooldownSeconds !== 'number') bad('/state 没带 cooldownSeconds')
+      else ok('/state：冷却是秒级 ' + state.json.cooldownSeconds + ' 秒')
     }
+
+    // 两个新动作端点：改完/清完要能回到 /state（自适应学习值先备份，测完还原，别弄丢用户的状态）
+    const adaptiveFile = SETTINGS_FILE.replace(/settings\.json$/, 'adaptive.json')
+    const adaptiveBefore = existsSync(adaptiveFile) ? readFileSync(adaptiveFile, 'utf8') : null
+    const clrSilence = await call('POST', '/bili-filter-api/clear-silence')
+    if (!clrSilence.json.ok) bad('/clear-silence 没应答 ok')
+    else ok('/clear-silence 可调用（cleared=' + clrSilence.json.cleared + '）')
+    const clrAdaptive = await call('POST', '/bili-filter-api/reset-adaptive')
+    if (!clrAdaptive.json.ok) bad('/reset-adaptive 没应答 ok')
+    else ok('/reset-adaptive 可调用（cleared=' + clrAdaptive.json.cleared + '）')
+    if (adaptiveBefore) writeFileSync(adaptiveFile, adaptiveBefore)
+    else if (existsSync(adaptiveFile)) unlinkSync(adaptiveFile)
 
     const cfg = await call('GET', '/bili-filter-api/settings')
     if (!cfg.json.ok || !cfg.json.settings || !cfg.json.limits) bad('/settings 返回不对')
@@ -456,6 +476,54 @@ try {
         if (!tree || tree.type !== 'div') bad('Panel 首次渲染没产出节点')
         else ok('client.js 注册进设置页（id=' + registered.spec.id + '，order=' + registered.spec.order + '），Panel 首渲染不抛')
       }
+
+      // 有数据时的渲染（0.5.4）：把 draft / state 注入，专跑「生效间隔 / 静默期」这两行新 UI，
+      // 免得只验了 null 分支、真实面板一开就炸。
+      let seq2 = 0
+      const deepDraft = JSON.parse(JSON.stringify(DEFAULT_SETTINGS))
+      const liveState = {
+        version: '0.5.4',
+        cooldownMinutes: 20,
+        cooldownSeconds: 1180,
+        silenceSeconds: 45,
+        callsThisRun: 4,
+        adaptive: { gapMs: 1200, effectiveGapMs: 1440, okStreak: 1 },
+        lastRun: null,
+      }
+      const fakeReact2 = {
+        ...fakeReact,
+        useState: (init) => {
+          seq2 += 1
+          if (seq2 === 1) return [deepDraft, () => {}]
+          if (seq2 === 3) return [liveState, () => {}]
+          return [typeof init === 'function' ? undefined : init, () => {}]
+        },
+      }
+      globalThis.window = {
+        __ModuleLoader__: {
+          load: ({ id, factory }) => {
+            mod = { id, api: factory((name) => (name === 'react' ? fakeReact2 : {})) }
+          },
+        },
+      }
+      await import(new URL('../client.js?panel-live=' + Date.now(), import.meta.url).href)
+      mod.api.apply({ get: () => slots, effect: (fn) => fn() })
+      const liveTree = registered.comp().type()
+      const flat = []
+      const walk = (node) => {
+        if (node === null || node === undefined || node === false) return
+        if (typeof node === 'string' || typeof node === 'number') { flat.push(String(node)); return }
+        if (Array.isArray(node)) { node.forEach(walk); return }
+        if (node && node.children) node.children.forEach(walk)
+      }
+      walk(liveTree)
+      const text = flat.join(' ')
+      if (!/生效 1440ms/.test(text)) bad('面板没渲染出生效间隔：' + text.slice(0, 120))
+      else ok('面板渲染出生效间隔（设置 / 学习 / 生效三个数都在）')
+      if (!/还剩 45 秒/.test(text)) bad('面板没渲染出静默期剩余')
+      else ok('面板渲染出静默期剩余 45 秒')
+      if (!/本次已用调用：4/.test(text)) bad('面板没渲染出本次调用数')
+      else ok('面板渲染出本次已用调用数')
     }
   }
 } catch (error) {

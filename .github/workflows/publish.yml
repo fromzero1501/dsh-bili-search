@@ -59,7 +59,7 @@ jobs:
           EOF
 
       - name: 发版前先跑一遍验收
-        run: npm run check && npm run smoke && npm run test:requests
+        run: npm test
 
       - name: 校验 tag 与 package.json 版本一致
         run: |
